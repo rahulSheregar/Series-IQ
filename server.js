@@ -5,6 +5,7 @@ const { getUserProfile, startOnboarding, processOnboardingAnswer, isInOnboarding
 const { testConnection } = require('./series-api');
 const { startDailyUpdateCron, stopDailyUpdateCron } = require('./cron-service');
 const { processDailyUpdate, hasBeenAskedToday, stopDailyUpdates, startDailyUpdates } = require('./daily-updates-service');
+const { classifyMessageType, answerQuestion, isConnectionRequest, findMatchingUsers } = require('./question-service');
 
 // Kafka Configuration from environment variables
 const kafka = new Kafka({
@@ -169,7 +170,7 @@ async function startServer() {
             console.log(`[Partition: ${partition}, Offset: ${currentOffset}]`);
             console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
-            // Handle user onboarding flow
+            // Handle user messages
             if (phoneNumber) {
               try {
                 // First, ensure user profile exists
@@ -186,55 +187,82 @@ async function startServer() {
                   return; // Exit early from this message handler
                 }
 
-                // Check if user is in onboarding flow
-                const inOnboarding = await isInOnboarding(phoneNumber);
+                // STEP 1: Check for keywords (STOP_UPDATES, START_UPDATES)
+                const normalizedMessage = messageText.trim().toUpperCase();
+                if (normalizedMessage === 'STOP_UPDATES') {
+                  console.log(`🛑 User ${phoneNumber} requested to stop daily updates`);
+                  await stopDailyUpdates(phoneNumber, chatId);
+                  return; // Exit after handling keyword
+                } else if (normalizedMessage === 'START_UPDATES') {
+                  console.log(`▶️  User ${phoneNumber} requested to resume daily updates`);
+                  await startDailyUpdates(phoneNumber, chatId);
+                  return; // Exit after handling keyword
+                }
 
+                // STEP 2: Check if user is in onboarding flow
+                const inOnboarding = await isInOnboarding(phoneNumber);
                 if (inOnboarding) {
                   // User is answering onboarding questions
                   console.log(`📝 Processing onboarding answer for ${phoneNumber}`);
                   await processOnboardingAnswer(phoneNumber, messageText, chatId);
+                  return; // Exit after handling onboarding
                 } else if (!userProfile.onboarding_completed) {
                   // First-time user, start onboarding
                   console.log(`🎯 First-time user detected: ${phoneNumber}, starting onboarding`);
                   await startOnboarding(phoneNumber, chatId);
+                  return; // Exit after starting onboarding
+                }
+
+                // STEP 3: User has completed onboarding - determine if question or daily update
+                console.log(`✅ User ${phoneNumber} has completed onboarding`);
+
+                // Check if this might be a response to a daily update request
+                const wasAskedToday = await hasBeenAskedToday(phoneNumber);
+                let isResponseToUpdateRequest = false;
+
+                if (wasAskedToday) {
+                  // Check if there's a pending update request (empty update_text)
+                  const { data: pendingUpdate } = await supabase
+                    .from('daily_updates')
+                    .select('id')
+                    .eq('phone_number', phoneNumber)
+                    .eq('update_text', '')
+                    .order('requested_at', { ascending: false })
+                    .limit(1)
+                    .single();
+
+                  if (pendingUpdate) {
+                    isResponseToUpdateRequest = true;
+                  }
+                }
+
+                if (isResponseToUpdateRequest) {
+                  // This is a response to daily update request - always treat as daily update
+                  console.log(`📝 Processing daily update response for ${phoneNumber}`);
+                  await processDailyUpdate(phoneNumber, messageText, chatId);
                 } else {
-                  // User has completed onboarding
-                  console.log(`✅ User ${phoneNumber} has completed onboarding`);
+                  // Use OpenAI to classify the message type
+                  console.log(`🔍 Classifying message type for ${phoneNumber}...`);
+                  const messageType = await classifyMessageType(messageText);
 
-                  // Check for STOP_UPDATES or START_UPDATES commands
-                  const normalizedMessage = messageText.trim().toUpperCase();
-                  if (normalizedMessage === 'STOP_UPDATES') {
-                    console.log(`🛑 User ${phoneNumber} requested to stop daily updates`);
-                    await stopDailyUpdates(phoneNumber, chatId);
-                  } else if (normalizedMessage === 'START_UPDATES') {
-                    console.log(`▶️  User ${phoneNumber} requested to resume daily updates`);
-                    await startDailyUpdates(phoneNumber, chatId);
-                  } else {
-                    // Check if this might be a response to a daily update request
-                    const wasAskedToday = await hasBeenAskedToday(phoneNumber);
-                    if (wasAskedToday) {
-                      // Check if there's a pending update request (empty update_text)
-                      const { data: pendingUpdate } = await supabase
-                        .from('daily_updates')
-                        .select('id')
-                        .eq('phone_number', phoneNumber)
-                        .eq('update_text', '')
-                        .order('requested_at', { ascending: false })
-                        .limit(1)
-                        .single();
+                  if (messageType === 'question') {
+                    // User is asking a question or making a request
+                    console.log(`❓ Classified as question/request from ${phoneNumber}`);
 
-                      if (pendingUpdate) {
-                        // This looks like a response to daily update request
-                        console.log(`📝 Processing daily update response for ${phoneNumber}`);
-                        await processDailyUpdate(phoneNumber, messageText, chatId);
-                      } else {
-                        // Normal message handling
-                        // Add your normal message handling logic here
-                      }
+                    // Check if it's a connection request
+                    const isConnection = await isConnectionRequest(messageText);
+                    if (isConnection) {
+                      // Handle connection request - search for matching users
+                      console.log(`🔗 Detected connection request from ${phoneNumber}`);
+                      await findMatchingUsers(phoneNumber, messageText, chatId);
                     } else {
-                      // Normal message handling
-                      // Add your normal message handling logic here
+                      // Regular question - answer it
+                      await answerQuestion(phoneNumber, messageText, chatId);
                     }
+                  } else {
+                    // User is sharing a daily update
+                    console.log(`📝 Classified as daily update from ${phoneNumber}`);
+                    await processDailyUpdate(phoneNumber, messageText, chatId);
                   }
                 }
 
