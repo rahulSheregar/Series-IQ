@@ -5,7 +5,7 @@ const { getUserProfile, startOnboarding, processOnboardingAnswer, isInOnboarding
 const { testConnection } = require('./series-api');
 const { startDailyUpdateCron, stopDailyUpdateCron } = require('./cron-service');
 const { processDailyUpdate, hasBeenAskedToday, stopDailyUpdates, startDailyUpdates } = require('./daily-updates-service');
-const { classifyMessageType, answerQuestion, isConnectionRequest, findMatchingUsers } = require('./question-service');
+const { classifyMessageType, answerQuestion, isConnectionRequest, findMatchingUsers, getPendingMatchDetail, sendMatchDetails } = require('./question-service');
 
 // Kafka Configuration from environment variables
 const kafka = new Kafka({
@@ -187,7 +187,7 @@ async function startServer() {
                   return; // Exit early from this message handler
                 }
 
-                // STEP 1: Check for keywords (STOP_UPDATES, START_UPDATES)
+                // STEP 1: Check for keywords (STOP_UPDATES, START_UPDATES, Y/YES for match details)
                 const normalizedMessage = messageText.trim().toUpperCase();
                 if (normalizedMessage === 'STOP_UPDATES') {
                   console.log(`🛑 User ${phoneNumber} requested to stop daily updates`);
@@ -197,6 +197,15 @@ async function startServer() {
                   console.log(`▶️  User ${phoneNumber} requested to resume daily updates`);
                   await startDailyUpdates(phoneNumber, chatId);
                   return; // Exit after handling keyword
+                } else if (normalizedMessage === 'Y' || normalizedMessage === 'YES') {
+                  // Check if user is responding to a pending match detail request
+                  const pendingMatch = await getPendingMatchDetail(phoneNumber);
+                  if (pendingMatch) {
+                    console.log(`🔓 User ${phoneNumber} requested match details for ${pendingMatch.matched_name}`);
+                    await sendMatchDetails(phoneNumber, pendingMatch, chatId);
+                    return; // Exit after handling match detail request
+                  }
+                  // If no pending match, fall through to normal processing
                 }
 
                 // STEP 2: Check if user is in onboarding flow
