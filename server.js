@@ -1,4 +1,5 @@
 const { Kafka } = require('kafkajs');
+const { saveUserProfile } = require('./supabase');
 
 // Kafka Configuration
 const kafka = new Kafka({
@@ -33,7 +34,7 @@ if (readFromBeginning) {
   console.log('ℹ️  Will read from beginning of topic (may receive old messages)');
 }
 
-const consumer = kafka.consumer({ 
+const consumer = kafka.consumer({
   groupId: consumerGroupId
 });
 
@@ -50,12 +51,12 @@ async function startServer() {
     console.log('Connecting to Kafka...');
     await consumer.connect();
     console.log('Connected to Kafka successfully!');
-    
-    await consumer.subscribe({ 
+
+    await consumer.subscribe({
       topic: topic,
       fromBeginning: readFromBeginning // Start from beginning if env var is set, otherwise from latest
     });
-    
+
     console.log(`Listening to topic: ${topic}`);
     console.log('Waiting for messages... (Press Ctrl+C to stop)\n');
     if (!readFromBeginning) {
@@ -64,7 +65,7 @@ async function startServer() {
     } else {
       console.log('ℹ️  Reading from beginning - may receive historical messages\n');
     }
-    
+
     // Add heartbeat to show consumer is alive and message counts
     setInterval(() => {
       const offsetInfo = Object.entries(lastOffsets)
@@ -72,17 +73,17 @@ async function startServer() {
         .join(', ');
       console.log(`💓 Consumer heartbeat - Total: ${totalMessages} | Counts (P0:${messageCounts[0]}, P1:${messageCounts[1]}, P2:${messageCounts[2]}) | Last Offsets (${offsetInfo})`);
     }, 30000); // Every 30 seconds
-    
+
     // Log partition assignments
     consumer.on(consumer.events.GROUP_JOIN, ({ payload }) => {
       console.log('\n📊 Consumer Group Assignment:');
       console.log('Member ID:', payload.memberId);
       console.log('Leader ID:', payload.leaderId);
       console.log('Is Leader:', payload.isLeader);
-      
+
       const assignedPartitions = payload.memberAssignment[topic] || [];
       console.log(`Assigned Partitions for ${topic}:`, assignedPartitions);
-      
+
       if (!payload.isLeader && assignedPartitions.length < 3) {
         console.log('\n⚠️  WARNING: You are not the leader and may not receive all partitions!');
         console.log('⚠️  Missing messages might be in partitions assigned to other consumers.');
@@ -95,7 +96,7 @@ async function startServer() {
       }
       console.log('');
     });
-    
+
     await consumer.run({
       eachBatch: async ({ batch }) => {
         // Log batch info for debugging
@@ -110,7 +111,7 @@ async function startServer() {
       eachMessage: async ({ topic, partition, message }) => {
         try {
           const currentOffset = parseInt(message.offset);
-          
+
           // Detect offset gaps
           if (lastOffsets[partition] !== null) {
             const expectedOffset = lastOffsets[partition] + 1;
@@ -122,34 +123,49 @@ async function startServer() {
               console.log(`   These messages may be in a different partition or were not published to Kafka.\n`);
             }
           }
-          
+
           // Update last offset
           lastOffsets[partition] = currentOffset;
-          
+
           // Track message counts
           messageCounts[partition] = (messageCounts[partition] || 0) + 1;
           totalMessages++;
-          
+
           // Parse the message value as JSON
           const rawValue = message.value.toString();
           const event = JSON.parse(rawValue);
-          
+
           // Log ALL messages received for debugging
           console.log(`🔔 Received event: ${event.event_type} [P${partition}, Offset: ${currentOffset}]`);
-          
+
           // Check if it's a message.received event
           if (event.event_type === 'message.received' && event.data) {
             const chatId = event.data.chat_id;
             const messageText = event.data.text || '(no text)';
-            
+            const phoneNumber = event.data.from_phone;
+
             console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
             console.log(`📨 Message Received [Total: ${totalMessages}]`);
             console.log(`Chat ID: ${chatId}`);
             console.log(`Message: ${messageText}`);
-            console.log(`From: ${event.data.from_phone || 'Unknown'}`);
+            console.log(`From: ${phoneNumber || 'Unknown'}`);
             console.log(`Sent At: ${event.data.sent_at || 'Unknown'}`);
             console.log(`[Partition: ${partition}, Offset: ${currentOffset}]`);
             console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+            // Save user profile to Supabase if phone number is available
+            if (phoneNumber) {
+              try {
+                const result = await saveUserProfile(phoneNumber);
+                if (result.isNew) {
+                  console.log(`💾 New user profile saved: ${phoneNumber}`);
+                } else {
+                  console.log(`💾 User profile already exists: ${phoneNumber}`);
+                }
+              } catch (error) {
+                console.error(`❌ Error saving user profile for ${phoneNumber}:`, error.message);
+              }
+            }
           } else if (event.event_type === 'typing_indicator.received') {
             console.log(`⌨️  Typing indicator received for Chat ID: ${event.data?.chat_id || 'N/A'} [Partition: ${partition}, Offset: ${currentOffset}]\n`);
           } else if (event.event_type === 'typing_indicator.removed') {

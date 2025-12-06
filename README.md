@@ -9,7 +9,15 @@ A Node.js server that listens to the Kafka topic and logs incoming messages with
 npm install
 ```
 
-2. Start the server:
+2. Set up Supabase:
+   - Follow the instructions in [SUPABASE_SETUP.md](./SUPABASE_SETUP.md)
+   - Create a `.env` file with your Supabase credentials:
+     ```env
+     SUPABASE_URL=your_supabase_project_url
+     SUPABASE_ANON_KEY=your_supabase_anon_key
+     ```
+
+3. Start the server:
 ```bash
 npm start
 ```
@@ -28,6 +36,7 @@ This will create a unique consumer group and assign all partitions to this insta
 - Listens to the team topic for real-time events
 - Logs message text and chat_id for `message.received` events
 - Also logs typing indicators and other event types
+- **Automatically saves user phone numbers to Supabase** when messages are received
 - Shows partition assignments and warnings if not receiving all partitions
 - Graceful shutdown on Ctrl+C
 

@@ -6,12 +6,15 @@
   "scripts": {
     "start": "node server.js"
   },
-  "keywords": ["kafka", "messaging"],
+  "keywords": [
+    "kafka",
+    "messaging"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@supabase/supabase-js": "^2.86.2",
+    "dotenv": "^17.2.3",
     "kafkajs": "^2.2.4"
   }
 }
-
-
