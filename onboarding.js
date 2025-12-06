@@ -25,8 +25,8 @@ const ONBOARDING_QUESTIONS = [
     },
     {
         number: 5,
-        question: "What are your interests?",
-        field: 'interests'
+        question: "Tell me about yourself.",
+        field: 'about_me'
     },
     {
         number: 6,
