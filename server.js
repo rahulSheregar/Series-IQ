@@ -1,6 +1,6 @@
 require('dotenv').config();
 const { Kafka } = require('kafkajs');
-const { saveUserProfile } = require('./supabase');
+const { saveUserProfile, updateLastReadMessage } = require('./supabase');
 const { getUserProfile, startOnboarding, processOnboardingAnswer, isInOnboarding } = require('./onboarding');
 const { testConnection } = require('./series-api');
 
@@ -194,6 +194,17 @@ async function startServer() {
                   // User has completed onboarding, handle normally
                   console.log(`✅ User ${phoneNumber} has completed onboarding`);
                   // Add your normal message handling logic here
+                }
+
+                // Update last read message and chat ID for this user
+                if (chatId !== null) {
+                  try {
+                    await updateLastReadMessage(phoneNumber, currentOffset, chatId);
+                    console.log(`📌 Updated last read: offset ${currentOffset}, chat ${chatId} for ${phoneNumber}`);
+                  } catch (updateError) {
+                    console.error(`⚠️  Failed to update last read message for ${phoneNumber}:`, updateError.message);
+                    // Don't throw - message processing should continue even if tracking fails
+                  }
                 }
               } catch (error) {
                 console.error(`❌ Error handling message for ${phoneNumber}:`, error.message);
