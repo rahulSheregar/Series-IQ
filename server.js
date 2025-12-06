@@ -1,26 +1,28 @@
+require('dotenv').config();
 const { Kafka } = require('kafkajs');
 const { saveUserProfile } = require('./supabase');
 const { getUserProfile, startOnboarding, processOnboardingAnswer, isInOnboarding } = require('./onboarding');
 const { testConnection } = require('./series-api');
 
-// Kafka Configuration
+// Kafka Configuration from environment variables
 const kafka = new Kafka({
-  clientId: 'team-client-d3cd502131d1487ead773f84bbc9e8b7',
-  brokers: ['pkc-619z3.us-east1.gcp.confluent.cloud:9092'],
-  ssl: true,
+  clientId: process.env.KAFKA_CLIENT_ID || 'team-client-d3cd502131d1487ead773f84bbc9e8b7',
+  brokers: (process.env.KAFKA_BROKERS || 'pkc-619z3.us-east1.gcp.confluent.cloud:9092').split(','),
+  ssl: process.env.KAFKA_SSL !== 'false', // Default to true
   sasl: {
-    mechanism: 'plain',
-    username: 'QRHNR6BCKVHD4M3U',
-    password: 'cfltTIivf3OHq6tr9fpASLxV4pp7vzPfvnz3cwT8+NAoOAJUCZwRuxuk1sSZTK+w'
+    mechanism: process.env.KAFKA_SASL_MECHANISM || 'plain',
+    username: process.env.KAFKA_USERNAME || '',
+    password: process.env.KAFKA_PASSWORD || ''
   }
 });
 
 // Use unique consumer group by default to ensure we get all partitions
 // Set USE_SHARED_GROUP=true to use the shared consumer group (for production with multiple consumers)
 const useSharedGroup = process.env.USE_SHARED_GROUP === 'true';
+const baseConsumerGroupId = process.env.KAFKA_CONSUMER_GROUP_ID || 'team-cg-d3cd502131d1487ead773f84bbc9e8b7';
 const consumerGroupId = useSharedGroup
-  ? 'team-cg-d3cd502131d1487ead773f84bbc9e8b7'
-  : `team-cg-d3cd502131d1487ead773f84bbc9e8b7-${Date.now()}`;
+  ? baseConsumerGroupId
+  : `${baseConsumerGroupId}-${Date.now()}`;
 
 // Set READ_FROM_BEGINNING=true to read all messages from the start (useful for catching up)
 const readFromBeginning = process.env.READ_FROM_BEGINNING === 'true';
@@ -40,7 +42,7 @@ const consumer = kafka.consumer({
   groupId: consumerGroupId
 });
 
-const topic = 'team.team.d3cd502131d1487ead773f84bbc9e8b7';
+const topic = process.env.KAFKA_TOPIC || 'team.team.d3cd502131d1487ead773f84bbc9e8b7';
 
 // Track message counts per partition
 const messageCounts = { 0: 0, 1: 0, 2: 0 };
