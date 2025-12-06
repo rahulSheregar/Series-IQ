@@ -1,5 +1,7 @@
 const { Kafka } = require('kafkajs');
 const { saveUserProfile } = require('./supabase');
+const { getUserProfile, startOnboarding, processOnboardingAnswer, isInOnboarding } = require('./onboarding');
+const { testConnection } = require('./series-api');
 
 // Kafka Configuration
 const kafka = new Kafka({
@@ -48,6 +50,11 @@ let totalMessages = 0;
 
 async function startServer() {
   try {
+    // Test Series API connection
+    console.log('Testing Series API connection...');
+    await testConnection();
+    console.log('');
+
     console.log('Connecting to Kafka...');
     await consumer.connect();
     console.log('Connected to Kafka successfully!');
@@ -140,7 +147,7 @@ async function startServer() {
 
           // Check if it's a message.received event
           if (event.event_type === 'message.received' && event.data) {
-            const chatId = event.data.chat_id;
+            const chatId = event.data.chat_id ? parseInt(event.data.chat_id) : null;
             const messageText = event.data.text || '(no text)';
             const phoneNumber = event.data.from_phone;
 
@@ -153,17 +160,42 @@ async function startServer() {
             console.log(`[Partition: ${partition}, Offset: ${currentOffset}]`);
             console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
-            // Save user profile to Supabase if phone number is available
+            // Handle user onboarding flow
             if (phoneNumber) {
               try {
+                // First, ensure user profile exists
                 const result = await saveUserProfile(phoneNumber);
                 if (result.isNew) {
                   console.log(`💾 New user profile saved: ${phoneNumber}`);
+                }
+
+                // Get user profile to check onboarding status
+                const userProfile = await getUserProfile(phoneNumber);
+
+                if (!userProfile) {
+                  console.error(`❌ Could not retrieve user profile for ${phoneNumber}`);
+                  return; // Exit early from this message handler
+                }
+
+                // Check if user is in onboarding flow
+                const inOnboarding = await isInOnboarding(phoneNumber);
+
+                if (inOnboarding) {
+                  // User is answering onboarding questions
+                  console.log(`📝 Processing onboarding answer for ${phoneNumber}`);
+                  await processOnboardingAnswer(phoneNumber, messageText, chatId);
+                } else if (!userProfile.onboarding_completed) {
+                  // First-time user, start onboarding
+                  console.log(`🎯 First-time user detected: ${phoneNumber}, starting onboarding`);
+                  await startOnboarding(phoneNumber, chatId);
                 } else {
-                  console.log(`💾 User profile already exists: ${phoneNumber}`);
+                  // User has completed onboarding, handle normally
+                  console.log(`✅ User ${phoneNumber} has completed onboarding`);
+                  // Add your normal message handling logic here
                 }
               } catch (error) {
-                console.error(`❌ Error saving user profile for ${phoneNumber}:`, error.message);
+                console.error(`❌ Error handling message for ${phoneNumber}:`, error.message);
+                console.error(error.stack);
               }
             }
           } else if (event.event_type === 'typing_indicator.received') {
