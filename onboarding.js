@@ -1,5 +1,6 @@
 const { supabase } = require('./supabase');
 const { sendMessage } = require('./series-api');
+const { generateUserContext } = require('./openai-service');
 
 // Define the 7 onboarding questions
 const ONBOARDING_QUESTIONS = [
@@ -155,6 +156,18 @@ async function processOnboardingAnswer(phoneNumber, messageText, chatId) {
 
                 if (error) throw error;
 
+                // Generate and save user context using OpenAI
+                try {
+                    console.log(`🤖 Generating context for ${phoneNumber}...`);
+                    const contextData = await generateUserContext(answers);
+                    await saveUserContext(phoneNumber, data.id, contextData);
+                    console.log(`✅ Generated and saved context for ${phoneNumber}`);
+                } catch (contextError) {
+                    console.error(`⚠️  Failed to generate context for ${phoneNumber}:`, contextError.message);
+                    console.error(`   Onboarding is still marked complete, but context generation failed.`);
+                    // Don't throw - onboarding is complete even if context generation fails
+                }
+
                 try {
                     await sendMessage(phoneNumber, "Thanks for completing the onboarding! We're all set.", chatId);
                     console.log(`✅ Completed onboarding for ${phoneNumber}`);
@@ -231,6 +244,18 @@ async function processOnboardingAnswer(phoneNumber, messageText, chatId) {
 
                 if (error) throw error;
 
+                // Generate and save user context using OpenAI
+                try {
+                    console.log(`🤖 Generating context for ${phoneNumber}...`);
+                    const contextData = await generateUserContext(answers);
+                    await saveUserContext(phoneNumber, data.id, contextData);
+                    console.log(`✅ Generated and saved context for ${phoneNumber}`);
+                } catch (contextError) {
+                    console.error(`⚠️  Failed to generate context for ${phoneNumber}:`, contextError.message);
+                    console.error(`   Onboarding is still marked complete, but context generation failed.`);
+                    // Don't throw - onboarding is complete even if context generation fails
+                }
+
                 try {
                     await sendMessage(phoneNumber, "Thanks for completing the onboarding! We're all set.", chatId);
                     console.log(`✅ Completed onboarding for ${phoneNumber}`);
@@ -291,6 +316,42 @@ async function isInOnboarding(phoneNumber) {
     } catch (error) {
         console.error('Error in isInOnboarding:', error);
         return false;
+    }
+}
+
+/**
+ * Save user context to database
+ * @param {string} phoneNumber - User's phone number
+ * @param {string} userProfileId - User profile UUID
+ * @param {Object} contextData - Object with context_text and key_topics
+ * @returns {Promise<Object>} - Saved context record
+ */
+async function saveUserContext(phoneNumber, userProfileId, contextData) {
+    try {
+        const { data, error } = await supabase
+            .from('user_context')
+            .upsert({
+                user_profile_id: userProfileId,
+                phone_number: phoneNumber,
+                context_text: contextData.context_text,
+                key_topics: contextData.key_topics,
+                updated_at: new Date().toISOString()
+            }, {
+                onConflict: 'user_profile_id'
+            })
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Error saving user context:', error);
+            throw error;
+        }
+
+        console.log(`✅ Saved user context for ${phoneNumber}`);
+        return data;
+    } catch (error) {
+        console.error('Error in saveUserContext:', error);
+        throw error;
     }
 }
 
