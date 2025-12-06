@@ -5,18 +5,28 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_API_URL = process.env.OPENAI_API_URL || 'https://api.openai.com/v1/chat/completions';
 
 /**
- * Generate user context using OpenAI based on onboarding answers
- * @param {Object} onboardingAnswers - User's onboarding answers
+ * Generate user context using OpenAI based on onboarding answers or custom prompt
+ * @param {Object|string} onboardingAnswersOrPrompt - User's onboarding answers object OR custom prompt string
  * @returns {Promise<Object>} - Object with context_text and key_topics
  */
-async function generateUserContext(onboardingAnswers) {
+async function generateUserContext(onboardingAnswersOrPrompt) {
     try {
         if (!OPENAI_API_KEY) {
             throw new Error('OPENAI_API_KEY not configured');
         }
 
-        // Build prompt from onboarding answers
-        const prompt = buildContextPrompt(onboardingAnswers);
+        // Check if it's a custom prompt (string) or onboarding answers (object)
+        let prompt;
+        if (typeof onboardingAnswersOrPrompt === 'string') {
+            // Custom prompt provided directly
+            prompt = onboardingAnswersOrPrompt;
+        } else if (onboardingAnswersOrPrompt.custom_prompt) {
+            // Custom prompt in object
+            prompt = onboardingAnswersOrPrompt.custom_prompt;
+        } else {
+            // Build prompt from onboarding answers
+            prompt = buildContextPrompt(onboardingAnswersOrPrompt);
+        }
 
         const response = await axios.post(
             OPENAI_API_URL,
@@ -45,10 +55,10 @@ async function generateUserContext(onboardingAnswers) {
         );
 
         const aiResponse = response.data.choices[0].message.content;
-        
+
         // Parse the response to extract context and topics
         const parsed = parseAIResponse(aiResponse);
-        
+
         return {
             context_text: parsed.context || aiResponse,
             key_topics: parsed.topics || []
@@ -72,7 +82,7 @@ async function generateUserContext(onboardingAnswers) {
  */
 function buildContextPrompt(answers) {
     const parts = [];
-    
+
     if (answers.name) parts.push(`Name: ${answers.name}`);
     if (answers.email) parts.push(`Email: ${answers.email}`);
     if (answers.age) parts.push(`Age: ${answers.age}`);
@@ -80,9 +90,9 @@ function buildContextPrompt(answers) {
     if (answers.about_me) parts.push(`About: ${answers.about_me}`);
     if (answers.occupation) parts.push(`Occupation: ${answers.occupation}`);
     if (answers.referral_source) parts.push(`Referral: ${answers.referral_source}`);
-    
+
     const userInfo = parts.join('\n');
-    
+
     return `Based on the following user information, generate:
 1. A concise context description (2-3 sentences) about this user, their background, and interests
 2. A list of 5-10 key topics/interests that would be relevant for AI search and content recommendations

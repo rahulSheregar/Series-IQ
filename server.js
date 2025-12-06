@@ -1,8 +1,10 @@
 require('dotenv').config();
 const { Kafka } = require('kafkajs');
-const { saveUserProfile, updateLastReadMessage } = require('./supabase');
+const { saveUserProfile, updateLastReadMessage, supabase } = require('./supabase');
 const { getUserProfile, startOnboarding, processOnboardingAnswer, isInOnboarding } = require('./onboarding');
 const { testConnection } = require('./series-api');
+const { startDailyUpdateCron, stopDailyUpdateCron } = require('./cron-service');
+const { processDailyUpdate, hasBeenAskedToday, stopDailyUpdates, startDailyUpdates } = require('./daily-updates-service');
 
 // Kafka Configuration from environment variables
 const kafka = new Kafka({
@@ -55,6 +57,11 @@ async function startServer() {
     // Test Series API connection
     console.log('Testing Series API connection...');
     await testConnection();
+    console.log('');
+
+    // Start daily update cron job
+    const cronSchedule = process.env.DAILY_UPDATE_CRON_SCHEDULE || '*/1 * * * *'; // Every 5 minutes by default
+    startDailyUpdateCron(cronSchedule);
     console.log('');
 
     console.log('Connecting to Kafka...');
@@ -191,9 +198,44 @@ async function startServer() {
                   console.log(`🎯 First-time user detected: ${phoneNumber}, starting onboarding`);
                   await startOnboarding(phoneNumber, chatId);
                 } else {
-                  // User has completed onboarding, handle normally
+                  // User has completed onboarding
                   console.log(`✅ User ${phoneNumber} has completed onboarding`);
-                  // Add your normal message handling logic here
+
+                  // Check for STOP_UPDATES or START_UPDATES commands
+                  const normalizedMessage = messageText.trim().toUpperCase();
+                  if (normalizedMessage === 'STOP_UPDATES') {
+                    console.log(`🛑 User ${phoneNumber} requested to stop daily updates`);
+                    await stopDailyUpdates(phoneNumber, chatId);
+                  } else if (normalizedMessage === 'START_UPDATES') {
+                    console.log(`▶️  User ${phoneNumber} requested to resume daily updates`);
+                    await startDailyUpdates(phoneNumber, chatId);
+                  } else {
+                    // Check if this might be a response to a daily update request
+                    const wasAskedToday = await hasBeenAskedToday(phoneNumber);
+                    if (wasAskedToday) {
+                      // Check if there's a pending update request (empty update_text)
+                      const { data: pendingUpdate } = await supabase
+                        .from('daily_updates')
+                        .select('id')
+                        .eq('phone_number', phoneNumber)
+                        .eq('update_text', '')
+                        .order('requested_at', { ascending: false })
+                        .limit(1)
+                        .single();
+
+                      if (pendingUpdate) {
+                        // This looks like a response to daily update request
+                        console.log(`📝 Processing daily update response for ${phoneNumber}`);
+                        await processDailyUpdate(phoneNumber, messageText, chatId);
+                      } else {
+                        // Normal message handling
+                        // Add your normal message handling logic here
+                      }
+                    } else {
+                      // Normal message handling
+                      // Add your normal message handling logic here
+                    }
+                  }
                 }
 
                 // Update last read message and chat ID for this user
@@ -236,12 +278,14 @@ async function startServer() {
 // Handle graceful shutdown
 process.on('SIGINT', async () => {
   console.log('\nShutting down gracefully...');
+  stopDailyUpdateCron();
   await consumer.disconnect();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   console.log('\nShutting down gracefully...');
+  stopDailyUpdateCron();
   await consumer.disconnect();
   process.exit(0);
 });
