@@ -464,44 +464,45 @@ async function findMatchingUsers(phoneNumber, request, chatId) {
       return message;
     }
 
-    // Process matches with new teaser flow
-    for (const user of highConfidenceMatches) {
-      const userName = user.user_profile?.name || "User";
+    // Only match with the top result (highest confidence)
+    const topMatch = highConfidenceMatches[0];
+    const userName = topMatch.user_profile?.name || "User";
 
-      // Generate AI content for this match
-      console.log(`🤖 Generating match content for ${userName}...`);
-      const matchReason = await generateMatchReason(request, {
-        context_text: user.context_text,
-        key_topics: user.key_topics,
-        activities: user.activities,
-      });
+    // Generate AI content for this match
+    console.log(`🤖 Generating match content for ${userName}...`);
+    const matchReason = await generateMatchReason(request, {
+      context_text: topMatch.context_text,
+      key_topics: topMatch.key_topics,
+      activities: topMatch.activities,
+    });
 
-      const detailedSummary = await generateDetailedSummary(
-        {
-          context_text: user.context_text,
-          key_topics: user.key_topics,
-          activities: user.activities,
-        },
-        userName
-      );
+    const detailedSummary = await generateDetailedSummary(
+      {
+        context_text: topMatch.context_text,
+        key_topics: topMatch.key_topics,
+        activities: topMatch.activities,
+      },
+      userName
+    );
 
-      // Store pending match for later reveal
-      await storePendingMatch(
-        phoneNumber,
-        user,
-        user.matchScore,
-        matchReason,
-        detailedSummary,
-        chatId
-      );
+    // Store pending match for later reveal
+    await storePendingMatch(
+      phoneNumber,
+      topMatch,
+      topMatch.matchScore,
+      matchReason,
+      detailedSummary,
+      chatId
+    );
 
-      // Send teaser message
-      const teaserMessage = `Found a match! ${userName} - ${matchReason}\n\nReply "Y" to get their contact info and full profile.`;
-      await sendMessage(phoneNumber, teaserMessage, chatId);
-      console.log(`📤 Sent match teaser for ${userName} to ${phoneNumber}`);
-    }
+    // Send teaser message
+    const teaserMessage = `Found a match! ${userName} - ${matchReason}\n\nReply "Y" to get their contact info and full profile.`;
+    await sendMessage(phoneNumber, teaserMessage, chatId);
+    console.log(`📤 Sent match teaser for ${userName} to ${phoneNumber}`);
 
-    return `Found ${highConfidenceMatches.length} matching user(s) - awaiting confirmation`;
+    return `Found best match (${(topMatch.matchScore * 100).toFixed(
+      0
+    )}% confidence) - awaiting confirmation`;
   } catch (error) {
     console.error("Error finding matching users:", error);
     const { sendMessage } = require("./series-api");
