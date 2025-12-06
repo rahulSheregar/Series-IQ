@@ -1,0 +1,17 @@
+{
+  "name": "kafka-message-listener",
+  "version": "1.0.0",
+  "description": "Server that listens to Kafka topic and logs messages",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": ["kafka", "messaging"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "kafkajs": "^2.2.4"
+  }
+}
+
+
